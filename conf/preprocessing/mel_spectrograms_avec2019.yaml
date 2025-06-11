@@ -16,7 +16,7 @@ pipeline:
       top_db: null
   - autrainer.transforms.SpectToImage:
       height: 128        # 128 mel bands
-      width: 256 
+      width: 160         # 160 time bins (160 * 25ms for each slice = 4 seconds)
       cmap: magma
   - autrainer.transforms.ImageToFloat
 
