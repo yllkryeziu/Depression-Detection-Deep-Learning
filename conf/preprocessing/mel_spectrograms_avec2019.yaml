@@ -1,0 +1,26 @@
+file_handler:
+  autrainer.datasets.utils.AudioFileHandler:
+    target_sample_rate: 16000
+
+pipeline:
+  - autrainer.transforms.StereoToMono
+  - autrainer.transforms.PannMel:
+      sample_rate: 16000
+      window_size: 1024  # For 4-second windows at 16kHz
+      hop_size: 400      # 1-second hop for AVEC 2019 (16000 samples / 40 = 400 for ~1s)
+      mel_bins: 128      # 128 mel-frequency bands as specified in AVEC 2019
+      fmin: 50
+      fmax: 8000
+      ref: 1.0
+      amin: 1e-10
+      top_db: null
+  - autrainer.transforms.SpectToImage:
+      height: 128        # 128 mel bands
+      width: 256 
+      cmap: magma
+  - autrainer.transforms.ImageToFloat
+
+# Adopted form AVEC 2019 specifications:
+# - 128 mel-frequency bands
+# - 4-second window width 
+# - 1-second hop size for USOM and E-DAIC datasets 
