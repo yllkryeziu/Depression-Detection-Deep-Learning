@@ -29,7 +29,7 @@ DEFAULT_BUFFER_SEC = 0.25  # Buffer in seconds
 DEFAULT_MAX_UTT_SEC = 90.0  # Maximum utterance length in seconds
 DEFAULT_SPLIT_UTTERANCES = True 
 DEFAULT_MERGE_UTTERANCES = True
-DEFAULT_PATIENT_IDS = list(range(363, 719))  # Full range [300, 719)
+DEFAULT_PATIENT_IDS = list(range(600, 719))  # Full range [300, 719)
 
 class ExtendedDAIC(BaseClassificationDataset):
     """
@@ -222,10 +222,15 @@ class ExtendedDAIC(BaseClassificationDataset):
                     print(f"Error processing transcript for patient {pid}: {e}")
                     continue
 
-                # Read + resample interview
+                # Read audio and check sample rate
                 try:
                     wav0 = next(f for f in os.listdir(pf) if f.lower().endswith(".wav"))
                     y, orig_sr = sf.read(os.path.join(pf, wav0))
+                    # Skip 48kHz audio for now
+                    if orig_sr == 48000:
+                        print(f"Skipping patient {pid}: audio is 48kHz")
+                        continue
+                    # Resample if needed (but not 48kHz)
                     if orig_sr != DEFAULT_SR_TARGET:
                         y = librosa.resample(y, orig_sr=orig_sr, target_sr=DEFAULT_SR_TARGET)
                     total = len(y)
