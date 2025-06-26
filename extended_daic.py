@@ -13,6 +13,8 @@ import librosa
 from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
+import torch
+from torch.nn.utils.rnn import pad_sequence
 
 from autrainer.datasets import BaseClassificationDataset
 
@@ -28,8 +30,7 @@ DEFAULT_SR_TARGET = 16000  # Sample rate for audio
 DEFAULT_BUFFER_SEC = 0.25  # Buffer in seconds
 DEFAULT_MAX_UTT_SEC = 90.0  # Maximum utterance length in seconds
 DEFAULT_SPLIT_UTTERANCES = True 
-DEFAULT_MERGE_UTTERANCES = True
-DEFAULT_PATIENT_IDS = list(range(600, 719))  # Full range [300, 719)
+DEFAULT_PATIENT_IDS = list(range(300, 493)) + list(range(600, 719))  # Exclude 493-599 as they don't exist
 
 class ExtendedDAIC(BaseClassificationDataset):
     """
@@ -41,8 +42,7 @@ class ExtendedDAIC(BaseClassificationDataset):
       • Prune to keep only <pid>_AUDIO.wav and <pid>_Transcript.csv, delete archive
 
     preprocess():
-      • Optionally split utterances (slice by transcript timestamps)
-      • Optionally merge utterances back into one WAV
+      • Split utterances (slice by transcript timestamps) and save as individual files
     """
 
     def __init__(
@@ -58,7 +58,6 @@ class ExtendedDAIC(BaseClassificationDataset):
         file_handler: Union[str, DictConfig, Dict],
         features_path: Optional[str] = None,
         split_utterances: bool = DEFAULT_SPLIT_UTTERANCES,
-        merge_utterances: bool = DEFAULT_MERGE_UTTERANCES,
         sr_target: int = DEFAULT_SR_TARGET,
         buffer_sec: float = DEFAULT_BUFFER_SEC,
         max_utt_sec: float = DEFAULT_MAX_UTT_SEC,
@@ -70,7 +69,6 @@ class ExtendedDAIC(BaseClassificationDataset):
         **kwargs
     ) -> None:
         self.split_utterances = split_utterances
-        self.merge_utterances = merge_utterances
         self.sr_target = sr_target
         self.buffer_sec = buffer_sec
         self.max_utt_sec = max_utt_sec
@@ -110,9 +108,11 @@ class ExtendedDAIC(BaseClassificationDataset):
         if BASE_URL is None:
             raise ValueError("BASE_URL environment variable not set. Please ensure it is in your .env file or environment.")
 
+        # Download original patient-based CSV files to a temporary location
+        temp_csvs = {}
         for split in ["train_split.csv", "dev_split.csv", "test_split.csv"]:
-            out_csv = os.path.join(p, split)
-            if not os.path.exists(out_csv):
+            temp_csv = os.path.join(p, f"temp_{split}")
+            if not os.path.exists(temp_csv):
                 url = os.path.join(BASE_URL, "labels", split)
                 print(f"Downloading {split} from {url}...")
                 try:
@@ -120,7 +120,7 @@ class ExtendedDAIC(BaseClassificationDataset):
                     r.raise_for_status()
                     total_size = int(r.headers.get('content-length', 0))
                     block_size = 8192
-                    with open(out_csv, "wb") as f, tqdm(
+                    with open(temp_csv, "wb") as f, tqdm(
                         total=total_size, unit='iB', unit_scale=True, desc=f"Downloading {split}"
                     ) as bar:
                         for chunk in r.iter_content(block_size):
@@ -129,46 +129,136 @@ class ExtendedDAIC(BaseClassificationDataset):
                     if total_size != 0 and bar.n != total_size:
                         print(f"Error: Downloaded size of {split} does not match expected size.")
                     else:
-                        print(f"Successfully downloaded {out_csv}")
-
-                    # Rename the downloaded file
-                    new_csv_name = split.replace('_split', '')
-                    new_csv_path = os.path.join(p, new_csv_name)
-                    try:
-                        os.rename(out_csv, new_csv_path)
-                        print(f"Renamed {out_csv} to {new_csv_path}")
-                    except OSError as e:
-                        print(f"Error renaming {out_csv} to {new_csv_path}: {e}")
+                        print(f"Successfully downloaded {temp_csv}")
 
                 except requests.exceptions.RequestException as e:
                     print(f"Error downloading {split}: {e}")
-                    if os.path.exists(out_csv):
-                        os.remove(out_csv)
+                    if os.path.exists(temp_csv):
+                        os.remove(temp_csv)
                     continue
+            
+            # Read the CSV to store patient information
+            temp_csvs[split] = pd.read_csv(temp_csv)
 
         # 2) Prepare folders
         patients_dir = os.path.join(p, "patients")
         os.makedirs(patients_dir, exist_ok=True)
-        interim_dir = os.path.join(p, "interim")
-        os.makedirs(interim_dir, exist_ok=True)
-        merged_dir = os.path.join(p, "default")
-        os.makedirs(merged_dir, exist_ok=True)
+        default_dir = os.path.join(p, "default")
+        os.makedirs(default_dir, exist_ok=True)
 
-        # 3) Per patient: Download, extract, slice, and merge immediately
+        # 3) Per patient: Download, extract, and slice immediately - save to flat structure
+        all_utterance_data = []  # Store information about all utterances
+        
         for pid in DEFAULT_PATIENT_IDS:
             archive_name = f"{pid}_P.tar.gz"
             archive_url = os.path.join(BASE_URL, "data", archive_name)
             local_archive_path = os.path.join(patients_dir, archive_name)
             patient_extract_dir = os.path.join(patients_dir, f"{pid}_P")
 
-            # Check if final merged output already exists
-            final_merged_file = os.path.join(merged_dir, str(pid), f"{pid}_P.wav")
-            if os.path.exists(final_merged_file):
-                print(f"Patient {pid} final merged audio already exists at {final_merged_file}. Skipping.")
+            # Check if utterances for this patient already exist in flat structure
+            existing_utterances = [f for f in os.listdir(default_dir) if f.startswith(f"{pid}_") and f.endswith('.wav')]
+            if existing_utterances:
+                print(f"Patient {pid} utterances already exist in flat structure. Skipping download.")
+                # Still need to collect the utterance information for CSV generation
+                patient_info = None
+                for split_name, split_df in temp_csvs.items():
+                    patient_row = split_df[split_df['Participant_ID'] == pid]
+                    if not patient_row.empty:
+                        patient_info = patient_row.iloc[0]
+                        break
+                
+                if patient_info is not None:
+                    for utterance_file in existing_utterances:
+                        utterance_data = {
+                            'filename': utterance_file,
+                            'Participant_ID': pid,
+                            'Gender': patient_info['Gender'],
+                            'PHQ_Binary': patient_info['PHQ_Binary'],
+                            'PHQ_Score': patient_info['PHQ_Score'],
+                            'PCL-C (PTSD)': patient_info['PCL-C (PTSD)'],
+                            'PTSD Severity': patient_info['PTSD Severity']
+                        }
+                        all_utterance_data.append(utterance_data)
                 continue
             
+            # Check if WAV and transcript files already exist in patients directory
+            if os.path.exists(patient_extract_dir):
+                wav_files = [f for f in os.listdir(patient_extract_dir) if f.lower().endswith(".wav")]
+                transcript_files = [f for f in os.listdir(patient_extract_dir) if "Transcript" in f]
+                
+                if wav_files and transcript_files:
+                    print(f"Patient {pid} WAV and transcript already exist in {patient_extract_dir}. Processing existing files...")
+                    # Skip download and extraction, go directly to slicing
+                    try:
+                        # Get patient information from CSV
+                        patient_info = None
+                        for split_name, split_df in temp_csvs.items():
+                            patient_row = split_df[split_df['Participant_ID'] == pid]
+                            if not patient_row.empty:
+                                patient_info = patient_row.iloc[0]
+                                break
+                        
+                        if patient_info is None:
+                            print(f"No patient information found for {pid}, skipping...")
+                            continue
+                            
+                        # Immediately slice utterances for this patient
+                        print(f"Slicing utterances for patient {pid}...")
+                        
+                        # Find transcript and columns
+                        tx = transcript_files[0]  # Use the first transcript file found
+                        df = pd.read_csv(os.path.join(patient_extract_dir, tx))
+                        df.columns = [c.lower() for c in df.columns]
+                        start_c = next(c for c in df.columns if "start" in c)
+                        end_c   = next(c for c in df.columns if "end"   in c)
+
+                        # Read audio and check sample rate
+                        wav0 = wav_files[0]  # Use the first WAV file found
+                        y, orig_sr = sf.read(os.path.join(patient_extract_dir, wav0))
+                        # Skip 48kHz audio for now
+                        if orig_sr == 48000:
+                            print(f"Skipping patient {pid}: audio is 48kHz")
+                            continue
+                        # Resample if needed (but not 48kHz)
+                        if orig_sr != DEFAULT_SR_TARGET:
+                            y = librosa.resample(y, orig_sr=orig_sr, target_sr=DEFAULT_SR_TARGET)
+                        total = len(y)
+
+                        # Slice utterances and save to flat structure
+                        utterance_count = 0
+                        for i, row in df.iterrows():
+                            s = int(row[start_c] * DEFAULT_SR_TARGET)
+                            e = int(min(total, (row[end_c] + DEFAULT_BUFFER_SEC) * DEFAULT_SR_TARGET))
+                            if (e - s) > DEFAULT_MAX_UTT_SEC * DEFAULT_SR_TARGET:
+                                continue
+                            
+                            utterance_filename = f"{pid}_{i:04d}.wav"
+                            utterance_path = os.path.join(default_dir, utterance_filename)
+                            sf.write(utterance_path, y[s:e], DEFAULT_SR_TARGET)
+                            
+                            # Store utterance information
+                            utterance_data = {
+                                'filename': utterance_filename,
+                                'Participant_ID': pid,
+                                'Gender': patient_info['Gender'],
+                                'PHQ_Binary': patient_info['PHQ_Binary'],
+                                'PHQ_Score': patient_info['PHQ_Score'],
+                                'PCL-C (PTSD)': patient_info['PCL-C (PTSD)'],
+                                'PTSD Severity': patient_info['PTSD Severity']
+                            }
+                            all_utterance_data.append(utterance_data)
+                            utterance_count += 1
+
+                        print(f"Successfully processed {utterance_count} utterances for patient {pid}")
+                        continue  # Skip to next patient
+                        
+                    except Exception as e:
+                        print(f"Error processing existing files for patient {pid}: {e}")
+                        print(f"Will attempt to re-download and extract...")
+                        # If processing existing files fails, continue with download
+            
             if os.path.exists(local_archive_path):
-                 print(f"Archive {local_archive_path} exists but final output not found. Removing archive to redownload.")
+                 print(f"Archive {local_archive_path} exists but utterances not found. Removing archive to redownload.")
                  os.remove(local_archive_path)
 
             print(f"Processing patient {pid}: Downloading {archive_name} from {archive_url}...")
@@ -202,8 +292,20 @@ class ExtendedDAIC(BaseClassificationDataset):
                 
                 print(f"Extraction complete for patient {pid}")
 
-                # Immediately slice and merge for this patient
-                print(f"Slicing and merging patient {pid}...")
+                # Get patient information from CSV
+                patient_info = None
+                for split_name, split_df in temp_csvs.items():
+                    patient_row = split_df[split_df['Participant_ID'] == pid]
+                    if not patient_row.empty:
+                        patient_info = patient_row.iloc[0]
+                        break
+                
+                if patient_info is None:
+                    print(f"No patient information found for {pid}, skipping...")
+                    continue
+
+                # Immediately slice utterances for this patient
+                print(f"Slicing utterances for patient {pid}...")
                 
                 # Slice utterances
                 pf = patient_extract_dir
@@ -238,48 +340,30 @@ class ExtendedDAIC(BaseClassificationDataset):
                     print(f"Error processing audio for patient {pid}: {e}")
                     continue
 
-                # Create interim directory for this patient
-                out_dir = os.path.join(interim_dir, str(pid))
-                os.makedirs(out_dir, exist_ok=True)
-
-                # Slice utterances
+                # Slice utterances and save to flat structure
+                utterance_count = 0
                 for i, row in df.iterrows():
                     s = int(row[start_c] * DEFAULT_SR_TARGET)
                     e = int(min(total, (row[end_c] + DEFAULT_BUFFER_SEC) * DEFAULT_SR_TARGET))
                     if (e - s) > DEFAULT_MAX_UTT_SEC * DEFAULT_SR_TARGET:
                         continue
-                    sf.write(
-                        os.path.join(out_dir, f"{pid}_{i:04d}.wav"),
-                        y[s:e],
-                        DEFAULT_SR_TARGET
-                    )
-
-                # Merge utterances
-                utt_dir = out_dir
-                if os.path.isdir(utt_dir):
-                    parts = sorted(
-                        f for f in os.listdir(utt_dir)
-                        if f.lower().endswith(".wav")
-                    )
-                    if parts:
-                        try:
-                            audio = np.concatenate([
-                                sf.read(os.path.join(utt_dir, f))[0] for f in parts
-                            ], axis=0)
-
-                            subj_dir = os.path.join(merged_dir, str(pid))
-                            os.makedirs(subj_dir, exist_ok=True)
-                            out_wav = os.path.join(subj_dir, f"{pid}_P.wav")
-                            sf.write(out_wav, audio, DEFAULT_SR_TARGET)
-
-                            # Cleanup interim utterances
-                            shutil.rmtree(utt_dir, ignore_errors=True)
-                            print(f"Successfully processed and merged audio for patient {pid}")
-                        except Exception as e:
-                            print(f"Error processing merged audio for patient {pid}: {e}")
-                            continue
-                    else:
-                        print(f"No utterance files found for patient {pid}")
+                    
+                    utterance_filename = f"{pid}_{i:04d}.wav"
+                    utterance_path = os.path.join(default_dir, utterance_filename)
+                    sf.write(utterance_path, y[s:e], DEFAULT_SR_TARGET)
+                    
+                    utterance_data = {
+                        'filename': utterance_filename,
+                        'Participant_ID': pid,
+                        'Gender': patient_info['Gender'],
+                        'PHQ_Binary': patient_info['PHQ_Binary'],
+                        'PHQ_Score': patient_info['PHQ_Score'],
+                        'PCL-C (PTSD)': patient_info['PCL-C (PTSD)'],
+                        'PTSD Severity': patient_info['PTSD Severity']
+                    }
+                    all_utterance_data.append(utterance_data)
+                    utterance_count += 1
+                print(f"Successfully processed {utterance_count} utterances for patient {pid}")
 
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading/processing {archive_name} for patient {pid}: {e}")
@@ -291,47 +375,35 @@ class ExtendedDAIC(BaseClassificationDataset):
                 if os.path.exists(local_archive_path):
                    os.remove(local_archive_path)
         
-        if os.path.exists(interim_dir) and not os.listdir(interim_dir):
-            os.rmdir(interim_dir)
+        # 4) Create new CSV files with utterance-level data
+        print("Creating utterance-level CSV files...")
+        
+        utterance_df = pd.DataFrame(all_utterance_data)
+        
+        if utterance_df.empty:
+            print("Warning: No utterance data found!")
+            return
+
+        for split_file, temp_csv_data in temp_csvs.items():
+            split_name = split_file.replace('_split.csv', '.csv')
+            split_patients = set(temp_csv_data['Participant_ID'].tolist())
+            
+            split_utterances = utterance_df[utterance_df['Participant_ID'].isin(split_patients)]
+            
+            if not split_utterances.empty:
+                output_csv = os.path.join(p, split_name)
+                split_utterances.to_csv(output_csv, index=False)
+                print(f"Created {output_csv} with {len(split_utterances)} utterances")
+            else:
+                print(f"Warning: No utterances found for {split_name}")
+        
+        for split in ["train_split.csv", "dev_split.csv", "test_split.csv"]:
+            temp_csv = os.path.join(p, f"temp_{split}")
+            if os.path.exists(temp_csv):
+                os.remove(temp_csv)
         
         print("All patient data processing completed.")
 
-    @cached_property
-    def df_train(self):
-        return self._build_split("train.csv")
-
-    @cached_property
-    def df_dev(self):
-        return self._build_split("dev.csv")
-
-    @cached_property
-    def df_test(self):
-        return self._build_split("test.csv")
-
     @property
     def output_dim(self):
-        # binary PHQ_Binary
         return 2
-
-# ExtendedDAIC specific methods
-
-    def _build_split(self, split_file: str):
-        df = pd.read_csv(os.path.join(self.path, split_file))
-        
-        def get_relative_path(pid):
-            # Use the file_type to determine the correct extension
-            file_name = f"{pid}_P.npy"
-            wav_f = os.path.join(str(pid), file_name)
-            full_path = os.path.join(self.path, self.features_subdir, wav_f)
-            if os.path.isfile(full_path):
-                return wav_f
-            return None
-        
-        df['file_path'] = df['Participant_ID'].apply(get_relative_path)
-        df = df.dropna(subset=['file_path'])
-        
-        df['Participant_ID'] = df['file_path']
-
-        df = df.drop('file_path', axis=1)
-        
-        return df

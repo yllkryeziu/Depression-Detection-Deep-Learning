@@ -5,17 +5,9 @@ import torch.nn.functional as F
 import torchvision.models as models
 from autrainer.models.abstract_model import AbstractModel
 
+__version__ = "0.1.0"
 
 class CNNGRUModel(AbstractModel):
-    """
-    CNN + GRU model for depression detection from mel spectrograms.
-    
-    This model follows the AVEC 2019 approach:
-    1. Extract features from mel spectrograms using pretrained CNNs
-    2. Use GRU for temporal modeling 
-    3. Classification with a final feedforward network
-    """
-    
     def __init__(
         self,
         output_dim: int,
@@ -29,21 +21,6 @@ class CNNGRUModel(AbstractModel):
         fc_dropout: float = 0.1,
         freeze_cnn: bool = False,
     ):
-        """
-        Initialize CNN+GRU model.
-        
-        Args:
-            output_dim: Number of output classes (2 for binary classification)
-            cnn_model: CNN backbone ('vgg16', 'alexnet', 'densenet121', 'densenet201')
-            pretrained: Whether to use pretrained weights
-            feature_dim: Dimension of CNN features (depends on CNN architecture)
-            gru_hidden_size: Hidden size of GRU layers
-            gru_num_layers: Number of GRU layers
-            gru_dropout: Dropout rate for GRU
-            fc_hidden_size: Hidden size of final FC layer
-            fc_dropout: Dropout rate for FC layers
-            freeze_cnn: Whether to freeze CNN parameters
-        """
         super().__init__(output_dim)
         
         self.cnn_model = cnn_model
@@ -137,23 +114,25 @@ class CNNGRUModel(AbstractModel):
                 
         return feature_extractor
     
+    def _convert_to_rgb(self, x):
+        if x.shape[-3] == 1:  # Single channel
+            x = x.repeat(*([1] * (len(x.shape) - 3)), 3, 1, 1)
+        return x
+
     def extract_cnn_features(self, mel_spectrograms):
         """
-        Extract CNN features from mel spectrograms.
-        
-        Args:
             mel_spectrograms: Batch of mel spectrograms [batch_size, seq_len, channels, height, width]
-            
-        Returns:
-            CNN features [batch_size, seq_len, feature_dim]
         """
         batch_size, seq_len = mel_spectrograms.shape[:2]
         
         mel_flat = mel_spectrograms.view(-1, *mel_spectrograms.shape[2:])
         
-        cnn_features = self.cnn(mel_flat)  # [batch_size * seq_len, feature_dim]
+        # Convert single channel to RGB for pretrained models
+        mel_flat = self._convert_to_rgb(mel_flat)
         
-        if cnn_features.shape[0] > 1:  # Avoid batch norm with single sample
+        cnn_features = self.cnn(mel_flat)
+        
+        if cnn_features.shape[0] > 1:
             cnn_features = self.feature_norm(cnn_features)
         
         cnn_features = cnn_features.view(batch_size, seq_len, self.feature_dim)
@@ -161,41 +140,26 @@ class CNNGRUModel(AbstractModel):
         return cnn_features
     
     def forward(self, features):
-        """
-        Forward pass through the model.
+        if features.dtype == torch.uint8:
+            features = features.float() / 255.0
         
-        Args:
-            features: Input mel spectrograms [batch_size, seq_len, channels, height, width]
-                     or [batch_size, channels, height, width] for single frame
-            
-        Returns:
-            Classification logits [batch_size, output_dim]
-        """
-
         if len(features.shape) == 4:
-            features = features.unsqueeze(1)  # Add sequence dimension
+            features = features.unsqueeze(1)
         
         cnn_features = self.extract_cnn_features(features)
         
-        gru_output, _ = self.gru(cnn_features)  # [batch_size, seq_len, gru_hidden_size]
+        gru_output, _ = self.gru(cnn_features)
         
-        last_output = gru_output[:, -1, :]  # [batch_size, gru_hidden_size]
-        
-        logits = self.fc(last_output)  # [batch_size, output_dim]
+        last_output = gru_output[:, -1, :]
+
+        logits = self.fc(last_output)
         
         return logits
     
     def embeddings(self, features):
-        """
-        Extract embeddings from the model (GRU hidden states).
-        
-        Args:
-            features: Input mel spectrograms [batch_size, seq_len, channels, height, width]
+        if features.dtype == torch.uint8:
+            features = features.float() / 255.0
             
-        Returns:
-            GRU embeddings [batch_size, gru_hidden_size]
-        """
-        # Handle single frame input
         if len(features.shape) == 4:
             features = features.unsqueeze(1)
         

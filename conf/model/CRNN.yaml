@@ -1,0 +1,8 @@
+id: CRNN
+_target_: crnn.CRNN
+
+hidden_size: 256
+gru_layers: 2
+
+transform:
+  type: grayscale

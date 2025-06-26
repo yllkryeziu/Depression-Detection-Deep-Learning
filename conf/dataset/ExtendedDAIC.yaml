@@ -3,25 +3,29 @@ _target_: extended_daic.ExtendedDAIC
 
 path: data/ExtendedDAIC
 features_subdir: mel_spectrograms_avec2019
-index_column: Participant_ID
+index_column: filename
 target_column: PHQ_Binary
 file_type: npy
 file_handler: autrainer.datasets.utils.NumpyFileHandler
 
 criterion: autrainer.criterions.BalancedCrossEntropyLoss
-metrics:
+metrics: 
   - autrainer.metrics.Accuracy
   - autrainer.metrics.UAR
   - autrainer.metrics.F1
 tracking_metric: autrainer.metrics.Accuracy
 
 transform:
-  type: image
-  base:
-    - autrainer.transforms.Expand:
-        size: 301
-        axis: -1
+  type: grayscale
   train:
     - autrainer.transforms.RandomCrop:
         size: 301
-        axis: -1
+        axis: -2
+  dev:
+    - autrainer.transforms.RandomCrop:
+        size: 301
+        axis: -2
+  test:
+    - autrainer.transforms.RandomCrop:
+        size: 301
+        axis: -2

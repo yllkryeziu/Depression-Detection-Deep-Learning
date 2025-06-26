@@ -1,0 +1,17 @@
+file_handler:
+  autrainer.datasets.utils.AudioFileHandler:
+    target_sample_rate: 32000
+pipeline:
+  - autrainer.transforms.StereoToMono
+  - mfcc.MFCC:
+      sample_rate: 32000
+      n_mfcc: 40
+      dct_type: 2
+      norm: ortho
+      log_mels: True
+      melkwargs:
+        n_fft: 1024
+        hop_length: 320
+        f_min: 50
+        f_max: 14000
+        n_mels: 64
