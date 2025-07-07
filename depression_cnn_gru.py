@@ -105,6 +105,33 @@ class CNNGRUModel(AbstractModel):
             )
             self.feature_dim = 1920
             
+        elif self.cnn_model == "efficientnet_b0":
+            model = models.efficientnet_b0(pretrained=self.pretrained)
+            feature_extractor = nn.Sequential(
+                model.features,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten(),
+            )
+            self.feature_dim = 1280
+            
+        elif self.cnn_model == "efficientnet_b1":
+            model = models.efficientnet_b1(pretrained=self.pretrained)
+            feature_extractor = nn.Sequential(
+                model.features,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten(),
+            )
+            self.feature_dim = 1280
+            
+        elif self.cnn_model == "efficientnet_b2":
+            model = models.efficientnet_b2(pretrained=self.pretrained)
+            feature_extractor = nn.Sequential(
+                model.features,
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten(),
+            )
+            self.feature_dim = 1408
+            
         else:
             raise ValueError(f"Unsupported CNN model: {self.cnn_model}")
         
@@ -120,15 +147,10 @@ class CNNGRUModel(AbstractModel):
         return x
 
     def extract_cnn_features(self, mel_spectrograms):
-        """
-            mel_spectrograms: Batch of mel spectrograms [batch_size, seq_len, channels, height, width]
-        """
         batch_size, seq_len = mel_spectrograms.shape[:2]
         
         mel_flat = mel_spectrograms.view(-1, *mel_spectrograms.shape[2:])
         
-        # Convert single channel to RGB for pretrained models
-        mel_flat = self._convert_to_rgb(mel_flat)
         
         cnn_features = self.cnn(mel_flat)
         
@@ -210,5 +232,38 @@ class DenseNet201GRUModel(CNNGRUModel):
             cnn_model="densenet201",
             pretrained=pretrained,
             feature_dim=1920,
+            **kwargs
+        )
+
+
+class EfficientNetB0GRUModel(CNNGRUModel):
+    def __init__(self, output_dim: int, pretrained: bool = True, **kwargs):
+        super().__init__(
+            output_dim=output_dim,
+            cnn_model="efficientnet_b0",
+            pretrained=pretrained,
+            feature_dim=1280,
+            **kwargs
+        )
+
+
+class EfficientNetB1GRUModel(CNNGRUModel):
+    def __init__(self, output_dim: int, pretrained: bool = True, **kwargs):
+        super().__init__(
+            output_dim=output_dim,
+            cnn_model="efficientnet_b1",
+            pretrained=pretrained,
+            feature_dim=1280,
+            **kwargs
+        )
+
+
+class EfficientNetB2GRUModel(CNNGRUModel):
+    def __init__(self, output_dim: int, pretrained: bool = True, **kwargs):
+        super().__init__(
+            output_dim=output_dim,
+            cnn_model="efficientnet_b2",
+            pretrained=pretrained,
+            feature_dim=1408,
             **kwargs
         ) 

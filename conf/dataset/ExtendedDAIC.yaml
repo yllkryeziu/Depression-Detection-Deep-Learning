@@ -17,15 +17,11 @@ tracking_metric: autrainer.metrics.Accuracy
 
 transform:
   type: grayscale
-  train:
-    - autrainer.transforms.RandomCrop:
+  base:
+    - autrainer.transforms.GrayscaleToRGB
+    - autrainer.transforms.Expand:
         size: 301
         axis: -2
-  dev:
-    - autrainer.transforms.RandomCrop:
-        size: 301
-        axis: -2
-  test:
     - autrainer.transforms.RandomCrop:
         size: 301
         axis: -2

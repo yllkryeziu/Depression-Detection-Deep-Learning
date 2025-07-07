@@ -1,12 +1,12 @@
 id: VGG16-GRU
 _target_: depression_cnn_gru.VGG16GRUModel
-pretrained: true
+weights: VGG16_Weights.DEFAULT
 gru_hidden_size: 64
 gru_num_layers: 2
 gru_dropout: 0.1
 fc_hidden_size: 32
 fc_dropout: 0.1
-freeze_cnn: false
+freeze_cnn: true
 
 transform:
   type: grayscale 

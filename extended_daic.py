@@ -30,7 +30,7 @@ DEFAULT_SR_TARGET = 16000  # Sample rate for audio
 DEFAULT_BUFFER_SEC = 0.25  # Buffer in seconds
 DEFAULT_MAX_UTT_SEC = 90.0  # Maximum utterance length in seconds
 DEFAULT_SPLIT_UTTERANCES = True 
-DEFAULT_PATIENT_IDS = list(range(300, 493)) + list(range(600, 719))  # Exclude 493-599 as they don't exist
+DEFAULT_PATIENT_IDS = list(range(300, 493)) + list(range(600, 719)) + list(range(600, 719)) # Exclude 493-599 as they don't exist
 
 class ExtendedDAIC(BaseClassificationDataset):
     """
@@ -104,6 +104,9 @@ class ExtendedDAIC(BaseClassificationDataset):
     @staticmethod
     def download(path: str) -> None:
         p = Path(path)
+        # Ensure the dataset directory exists
+        p.mkdir(parents=True, exist_ok=True)
+        
         # 1) Download split CSVs directly to dataset path
         if BASE_URL is None:
             raise ValueError("BASE_URL environment variable not set. Please ensure it is in your .env file or environment.")

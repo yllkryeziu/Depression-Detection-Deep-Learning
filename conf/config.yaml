@@ -4,7 +4,7 @@ defaults:
 
 results_dir: results
 experiment_id: default
-iterations: 20
+iterations: 50
 
 hydra:
   sweeper:
@@ -13,5 +13,5 @@ hydra:
       +batch_size: 32
       +learning_rate: 0.001
       dataset: ExtendedDAIC
-      model: AlexNet-GRU
+      model: EfficientNetB0-GRU
       optimizer: Adam
