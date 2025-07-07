@@ -1,0 +1,14 @@
+[project]
+name = "minimal-uv"
+version = "0.1.0"
+description = "minimal uv environment"
+requires-python = ">=3.10"
+authors = ["Yll Kryeziu <yll.kryeziu@tum.de>"]
+dependencies = [
+    "autrainer",
+    "python-dotenv"
+]
+
+
+[tool.uv]
+dev-dependencies = ["ruff"]

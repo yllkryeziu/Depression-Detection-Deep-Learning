@@ -1,6 +1,6 @@
 id: VGG16-GRU
 _target_: depression_cnn_gru.VGG16GRUModel
-weights: VGG16_Weights.DEFAULT
+pretrained: true
 gru_hidden_size: 64
 gru_num_layers: 2
 gru_dropout: 0.1

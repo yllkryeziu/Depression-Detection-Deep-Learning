@@ -176,3 +176,20 @@ outputs
 results
 autrainer-main
 AVEC2019-master
+
+# Devenv
+.devenv*
+devenv.local.nix
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Auto generated through devenv, contains $PWD
+.envrc.local
+
+# slurm
+.slurm_outputs/
+_README.md
