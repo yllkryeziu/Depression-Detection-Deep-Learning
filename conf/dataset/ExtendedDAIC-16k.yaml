@@ -1,8 +1,8 @@
-id: ExtendedDAIC
+id: ExtendedDAIC-16k
 _target_: extended_daic.ExtendedDAIC
 
-path: data/ExtendedDAIC
-features_subdir: mel_spectrograms_avec2019
+path: data/ExtendedDAIC-16k
+features_subdir: log_mel_16k
 index_column: filename
 target_column: PHQ_Binary
 file_type: npy
@@ -16,12 +16,11 @@ metrics:
 tracking_metric: autrainer.metrics.Accuracy
 
 transform:
-  type: grayscale
+  type: image
   base:
-    - autrainer.transforms.GrayscaleToRGB
     - autrainer.transforms.Expand:
         size: 301
-        axis: -2
+        axis: -1
     - autrainer.transforms.RandomCrop:
         size: 301
-        axis: -2
+        axis: -1

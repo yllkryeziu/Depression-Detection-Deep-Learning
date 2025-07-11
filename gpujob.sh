@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH --time=00:10:00
+#SBATCH --time=20:00:00
 #SBATCH --partition=students
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=5000
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=16000
 #SBATCH --output=.slurm_outputs/slurm_%A.out
 
-echo "Starting Python training script..."
-python --version
-echo "Script finished."
+echo "Starting ..."
+autrainer train
+echo "Job finished."
 
