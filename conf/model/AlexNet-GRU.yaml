@@ -9,4 +9,4 @@ fc_dropout: 0.3
 freeze_cnn: false
 
 transform:
-  type: image 
+  type: grayscale 
