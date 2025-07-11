@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 results_dir: results
-experiment_id: default_2
+experiment_id: cnn10-binary-experiment
 iterations: 50
 
 hydra:
@@ -13,5 +13,5 @@ hydra:
       +batch_size: 32
       +learning_rate: 0.001
       dataset: ExtendedDAIC-16k
-      model: CNN10
+      model: CNN10-binary,CNN10-binary-frozen
       optimizer: Adam
