@@ -13,5 +13,5 @@ hydra:
       +batch_size: 32
       +learning_rate: 0.001
       dataset: ExtendedDAIC-16k
-      model: EfficientNetB0-GRU, EfficientNetB2-GRU, VGG16-GRU
+      model: CNN10
       optimizer: Adam
