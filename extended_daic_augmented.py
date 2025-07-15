@@ -3,6 +3,7 @@ import shutil
 from typing import Dict, List, Optional, Union
 import requests
 import tarfile
+import random
 
 from omegaconf import DictConfig
 import pandas as pd
@@ -16,8 +17,9 @@ from tqdm import tqdm
 from autrainer.datasets import BaseClassificationDataset
 
 """
-Load the dataset base url from the environment variables.
-You should request access to the dataset from the authors
+Extended DAIC dataset with audio augmentation for depressed samples.
+This variant creates additional training samples using pitch shifting and time stretching
+to balance the dataset and improve model performance on depressed samples.
 """
 
 load_dotenv()
@@ -32,12 +34,25 @@ DEFAULT_OVERLAP_RATIO = 0.33  # 33% overlap
 
 
 def load_patient_ids(patient_ids_file: str = "patient_ids.txt") -> List[int]:
+    """
+    Load patient IDs from a file.
+    
+    Args:
+        patient_ids_file: Path to the file containing patient IDs (one per line)
+        
+    Returns:
+        List of patient IDs as integers
+        
+    Raises:
+        FileNotFoundError: If the patient IDs file is not found
+        ValueError: If the file contains invalid patient IDs
+    """
     try:
         with open(patient_ids_file, 'r') as f:
             patient_ids = []
             for line in f:
                 line = line.strip()
-                if line:  # Skip empty lines
+                if line and not line.startswith('#'):  # Skip empty lines and comments
                     try:
                         patient_ids.append(int(line))
                     except ValueError:
@@ -104,17 +119,42 @@ def create_overlapping_segments(
     return segments
 
 
-class ExtendedDAIC_fixed(BaseClassificationDataset):
+def apply_pitch_shift(audio: np.ndarray, sr: int, n_steps: float) -> np.ndarray:
     """
-    E-DAIC dataset for depression detection.
+    Apply pitch shifting to audio.
+    
+    Args:
+        audio: Input audio array
+        sr: Sample rate
+        n_steps: Number of pitch steps to shift (positive = higher, negative = lower)
+        
+    Returns:
+        Pitch-shifted audio array
+    """
+    return librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
-    download():
-      • Fetch train/dev/test CSVs
-      • Download & extract each <pid>_P.tar.gz with progress visualization
-      • Prune to keep only <pid>_AUDIO.wav and <pid>_Transcript.csv, delete archive
 
-    preprocess():
-      • Split utterances (slice by transcript timestamps) and save as individual files
+def apply_time_stretch(audio: np.ndarray, rate: float) -> np.ndarray:
+    """
+    Apply time stretching to audio.
+    
+    Args:
+        audio: Input audio array
+        rate: Time stretch rate (>1.0 = faster, <1.0 = slower)
+        
+    Returns:
+        Time-stretched audio array
+    """
+    return librosa.effects.time_stretch(audio, rate=rate)
+
+
+class ExtendedDAIC_augmented(BaseClassificationDataset):
+    """
+    Extended DAIC dataset with audio augmentation for depressed samples.
+    
+    This variant creates additional training samples from depressed patients using:
+    - Pitch shifting: Slightly alter pitch up or down
+    - Time stretching: Speed up or slow down audio without changing pitch
     """
 
     def __init__(
@@ -138,6 +178,10 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
         train_transform=None,
         dev_transform=None,
         test_transform=None,
+        augmentation_factor: int = 2,
+        pitch_shift_steps: List[float] = [-2, -1, 1, 2],
+        time_stretch_rates: List[float] = [0.9, 0.95, 1.05, 1.1],
+        augmentation_seed: int = 42,
         **kwargs,
     ) -> None:
         self.split_utterances = split_utterances
@@ -145,6 +189,10 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
         self.buffer_sec = buffer_sec
         self.max_utt_sec = max_utt_sec
         self.chunk_dur = chunk_dur
+        self.augmentation_factor = augmentation_factor
+        self.pitch_shift_steps = pitch_shift_steps
+        self.time_stretch_rates = time_stretch_rates
+        self.augmentation_seed = augmentation_seed
 
         if patient_range:
             self.patient_ids = list(range(patient_range[0], patient_range[1]))
@@ -295,7 +343,109 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
             return False
 
     @staticmethod
-    def download(path: str) -> None:
+    def _augment_depressed_samples(
+        utterance_df: pd.DataFrame, 
+        temp_csvs: Dict, 
+        default_dir: str,
+        augmentation_factor: int = 2,
+        pitch_shift_steps: List[float] = [-2, -1, 1, 2],
+        time_stretch_rates: List[float] = [0.9, 0.95, 1.05, 1.1],
+        augmentation_seed: int = 42
+    ) -> pd.DataFrame:
+        """Create augmented samples from depressed patients in training data."""
+        # Get training patients
+        train_patients = set(temp_csvs["train_split.csv"]["Participant_ID"].tolist())
+        train_utterances = utterance_df[utterance_df["Participant_ID"].isin(train_patients)]
+        
+        # Get depressed training samples
+        depressed_train = train_utterances[train_utterances["PHQ_Binary"] == 1]
+        
+        if depressed_train.empty:
+            print("No depressed training samples found for augmentation.")
+            return utterance_df
+        
+        print(f"\nAUGMENTING DEPRESSED SAMPLES:")
+        print(f"  Original depressed training samples: {len(depressed_train)}")
+        print(f"  Augmentation factor: {augmentation_factor}")
+        
+        # Set random seed for reproducibility
+        random.seed(augmentation_seed)
+        np.random.seed(augmentation_seed)
+        
+        augmented_data = []
+        total_augmented = 0
+        
+        # Create augmented samples
+        for _, row in depressed_train.iterrows():
+            original_filename = row["filename"]
+            original_path = os.path.join(default_dir, original_filename)
+            
+            if not os.path.exists(original_path):
+                print(f"Warning: Original file {original_path} not found, skipping augmentation")
+                continue
+            
+            # Load original audio
+            try:
+                audio, sr = sf.read(original_path)
+            except Exception as e:
+                print(f"Error reading {original_path}: {e}")
+                continue
+            
+            # Create augmented versions
+            for aug_idx in range(augmentation_factor):
+                # Randomly choose augmentation type
+                aug_type = random.choice(["pitch_shift", "time_stretch"])
+                
+                try:
+                    if aug_type == "pitch_shift":
+                        # Apply pitch shifting
+                        n_steps = random.choice(pitch_shift_steps)
+                        augmented_audio = apply_pitch_shift(audio, sr, n_steps)
+                        aug_suffix = f"pitch_{n_steps:+.1f}"
+                    else:
+                        # Apply time stretching
+                        rate = random.choice(time_stretch_rates)
+                        augmented_audio = apply_time_stretch(audio, rate)
+                        aug_suffix = f"time_{rate:.2f}"
+                    
+                    # Create augmented filename
+                    base_name = original_filename.replace(".wav", "")
+                    aug_filename = f"{base_name}_aug_{aug_idx}_{aug_suffix}.wav"
+                    aug_path = os.path.join(default_dir, aug_filename)
+                    
+                    # Save augmented audio
+                    sf.write(aug_path, augmented_audio, sr)
+                    
+                    # Create augmented data entry
+                    aug_data = row.copy()
+                    aug_data["filename"] = aug_filename
+                    augmented_data.append(aug_data)
+                    total_augmented += 1
+                    
+                except Exception as e:
+                    print(f"Error creating augmented sample {aug_idx} for {original_filename}: {e}")
+                    continue
+        
+        print(f"  Created {total_augmented} augmented samples")
+        
+        # Combine original and augmented data
+        if augmented_data:
+            augmented_df = pd.DataFrame(augmented_data)
+            combined_df = pd.concat([utterance_df, augmented_df], ignore_index=True)
+            print(f"  Total samples after augmentation: {len(combined_df)}")
+            return combined_df
+        else:
+            print("  No augmented samples created")
+            return utterance_df
+
+    @staticmethod
+    def download(
+        path: str, 
+        augmentation_factor: int = 2,
+        pitch_shift_steps: List[float] = [-2, -1, 1, 2],
+        time_stretch_rates: List[float] = [0.9, 0.95, 1.05, 1.1],
+        augmentation_seed: int = 42
+    ) -> None:
         p = Path(path)
         p.mkdir(parents=True, exist_ok=True)
 
@@ -310,7 +460,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
             temp_csv = os.path.join(p, f"temp_{split}")
             if not os.path.exists(temp_csv):
                 url = os.path.join(BASE_URL, "labels", split)
-                if ExtendedDAIC_fixed._download_file(url, temp_csv, f"Downloading {split}"):
+                if ExtendedDAIC_augmented._download_file(url, temp_csv, f"Downloading {split}"):
                     print(f"Successfully downloaded {temp_csv}")
                 else:
                     continue
@@ -324,6 +474,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
 
         all_utterance_data = []
 
+        # Process patients (same as base class)
         for pid in DEFAULT_PATIENT_IDS:
             archive_name = f"{pid}_P.tar.gz"
             archive_url = os.path.join(BASE_URL, "data", archive_name)
@@ -333,15 +484,15 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
             # Check if utterances already exist in flat structure
             existing_utterances = [
                 f for f in os.listdir(default_dir) 
-                if f.startswith(f"{pid}_") and f.endswith(".wav")
+                if f.startswith(f"{pid}_") and f.endswith(".wav") and "_aug_" not in f
             ]
             
             if existing_utterances:
                 print(f"Patient {pid} utterances already exist in flat structure. Skipping download.")
-                patient_info = ExtendedDAIC_fixed._get_patient_info(pid, temp_csvs)
+                patient_info = ExtendedDAIC_augmented._get_patient_info(pid, temp_csvs)
                 if patient_info is not None:
                     for utterance_file in existing_utterances:
-                        utterance_data = ExtendedDAIC_fixed._create_utterance_data(
+                        utterance_data = ExtendedDAIC_augmented._create_utterance_data(
                             utterance_file, pid, patient_info
                         )
                         all_utterance_data.append(utterance_data)
@@ -354,12 +505,12 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
 
                 if wav_files and transcript_files:
                     print(f"Patient {pid} WAV and transcript already exist. Processing existing files...")
-                    patient_info = ExtendedDAIC_fixed._get_patient_info(pid, temp_csvs)
+                    patient_info = ExtendedDAIC_augmented._get_patient_info(pid, temp_csvs)
                     if patient_info is None:
                         print(f"No patient information found for {pid}, skipping...")
                         continue
 
-                    utterance_count = ExtendedDAIC_fixed._process_audio_and_transcript(
+                    utterance_count = ExtendedDAIC_augmented._process_audio_and_transcript(
                         patient_extract_dir, pid, patient_info, default_dir
                     )
                     
@@ -367,7 +518,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                         # Create utterance data for each segment
                         for i in range(utterance_count):
                             utterance_filename = f"{pid}_{i:04d}.wav"
-                            utterance_data = ExtendedDAIC_fixed._create_utterance_data(
+                            utterance_data = ExtendedDAIC_augmented._create_utterance_data(
                                 utterance_filename, pid, patient_info
                             )
                             all_utterance_data.append(utterance_data)
@@ -382,7 +533,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
 
             print(f"Processing patient {pid}: Downloading {archive_name}...")
             
-            if not ExtendedDAIC_fixed._download_file(archive_url, local_archive_path, f"Downloading {archive_name}"):
+            if not ExtendedDAIC_augmented._download_file(archive_url, local_archive_path, f"Downloading {archive_name}"):
                 continue
 
             try:
@@ -398,12 +549,12 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 print(f"Extraction complete for patient {pid}")
 
                 # Get patient information and process audio
-                patient_info = ExtendedDAIC_fixed._get_patient_info(pid, temp_csvs)
+                patient_info = ExtendedDAIC_augmented._get_patient_info(pid, temp_csvs)
                 if patient_info is None:
                     print(f"No patient information found for {pid}, skipping...")
                     continue
 
-                utterance_count = ExtendedDAIC_fixed._process_audio_and_transcript(
+                utterance_count = ExtendedDAIC_augmented._process_audio_and_transcript(
                     patient_extract_dir, pid, patient_info, default_dir
                 )
                 
@@ -411,7 +562,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                     # Create utterance data for each segment
                     for i in range(utterance_count):
                         utterance_filename = f"{pid}_{i:04d}.wav"
-                        utterance_data = ExtendedDAIC_fixed._create_utterance_data(
+                        utterance_data = ExtendedDAIC_augmented._create_utterance_data(
                             utterance_filename, pid, patient_info
                         )
                         all_utterance_data.append(utterance_data)
@@ -426,18 +577,25 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 if os.path.exists(local_archive_path):
                     os.remove(local_archive_path)
 
-        # Create CSV files with utterance-level data
-        print("Creating utterance-level CSV files...")
+        # Create DataFrame and augment depressed samples
         utterance_df = pd.DataFrame(all_utterance_data)
-
+        
         if utterance_df.empty:
             print("Warning: No utterance data found!")
             return
 
+        # Augment depressed samples
+        augmented_utterance_df = ExtendedDAIC_augmented._augment_depressed_samples(
+            utterance_df, temp_csvs, default_dir, augmentation_factor, 
+            pitch_shift_steps, time_stretch_rates, augmentation_seed
+        )
+
+        # Create CSV files with augmented data
+        print("Creating augmented CSV files...")
         for split_file, temp_csv_data in temp_csvs.items():
             split_name = split_file.replace("_split.csv", ".csv")
             split_patients = set(temp_csv_data["Participant_ID"].tolist())
-            split_utterances = utterance_df[utterance_df["Participant_ID"].isin(split_patients)]
+            split_utterances = augmented_utterance_df[augmented_utterance_df["Participant_ID"].isin(split_patients)]
 
             if not split_utterances.empty:
                 output_csv = os.path.join(p, split_name)
@@ -453,30 +611,38 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 os.remove(temp_csv)
 
         # Generate and display patient statistics
-        ExtendedDAIC_fixed._generate_patient_statistics(utterance_df, temp_csvs)
+        ExtendedDAIC_augmented._generate_patient_statistics(augmented_utterance_df, temp_csvs)
 
-        print("All patient data processing completed.")
+        print("All augmented patient data processing completed.")
 
     @staticmethod
     def _generate_patient_statistics(utterance_df: pd.DataFrame, temp_csvs: Dict) -> None:
         """Generate and display patient statistics after download completion."""
         print("\n" + "="*60)
-        print("PATIENT STATISTICS OVERVIEW")
+        print("AUGMENTED PATIENT STATISTICS OVERVIEW")
         print("="*60)
         
+        # Separate original and augmented samples
+        original_samples = utterance_df[~utterance_df["filename"].str.contains("_aug_")]
+        augmented_samples = utterance_df[utterance_df["filename"].str.contains("_aug_")]
+        
         # Overall statistics
-        total_patients = utterance_df['Participant_ID'].nunique()
+        total_patients = original_samples['Participant_ID'].nunique()
         total_utterances = len(utterance_df)
+        original_utterances = len(original_samples)
+        augmented_utterances = len(augmented_samples)
         
         # Depression statistics
-        depressed_patients = utterance_df[utterance_df['PHQ_Binary'] == 1]['Participant_ID'].nunique()
-        non_depressed_patients = utterance_df[utterance_df['PHQ_Binary'] == 0]['Participant_ID'].nunique()
+        depressed_patients = original_samples[original_samples['PHQ_Binary'] == 1]['Participant_ID'].nunique()
+        non_depressed_patients = original_samples[original_samples['PHQ_Binary'] == 0]['Participant_ID'].nunique()
         
         depressed_utterances = len(utterance_df[utterance_df['PHQ_Binary'] == 1])
         non_depressed_utterances = len(utterance_df[utterance_df['PHQ_Binary'] == 0])
         
         print(f"Total Patients: {total_patients}")
         print(f"Total Utterances: {total_utterances}")
+        print(f"  Original: {original_utterances}")
+        print(f"  Augmented: {augmented_utterances}")
         print(f"Average Utterances per Patient: {total_utterances/total_patients:.1f}")
         print()
         
@@ -502,32 +668,18 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 split_depressed_patients = split_utterances[split_utterances['PHQ_Binary'] == 1]['Participant_ID'].nunique()
                 split_non_depressed_patients = split_utterances[split_utterances['PHQ_Binary'] == 0]['Participant_ID'].nunique()
                 
+                # Count augmented samples in this split
+                split_augmented = len(split_utterances[split_utterances['filename'].str.contains('_aug_')])
+                
                 print(f"  {split_name} Split:")
                 print(f"    Patients: {split_depressed_patients + split_non_depressed_patients}")
-                print(f"    Utterances: {split_total}")
+                print(f"    Utterances: {split_total} (including {split_augmented} augmented)")
                 print(f"    Depressed: {split_depressed_patients} patients, {split_depressed} utterances ({split_depressed/split_total*100:.1f}%)")
                 print(f"    Non-Depressed: {split_non_depressed_patients} patients, {split_non_depressed} utterances ({split_non_depressed/split_total*100:.1f}%)")
                 print()
-        
-        # PHQ score distribution
-        print("PHQ SCORE DISTRIBUTION:")
-        phq_stats = utterance_df.groupby('Participant_ID')['PHQ_Score'].first()
-        print(f"  Mean PHQ Score: {phq_stats.mean():.2f}")
-        print(f"  Median PHQ Score: {phq_stats.median():.2f}")
-        print(f"  PHQ Score Range: {phq_stats.min():.0f} - {phq_stats.max():.0f}")
-        
-        # PHQ score bins
-        bins = [0, 5, 10, 15, 20, 27]
-        labels = ['Minimal (0-4)', 'Mild (5-9)', 'Moderate (10-14)', 'Moderately Severe (15-19)', 'Severe (20-27)']
-        phq_binned = pd.cut(phq_stats, bins=bins, labels=labels, include_lowest=True)
-        phq_counts = phq_binned.value_counts().sort_index()
-        
-        print("  PHQ Score Categories:")
-        for category, count in phq_counts.items():
-            print(f"    {category}: {count} patients ({count/len(phq_stats)*100:.1f}%)")
         
         print("="*60)
 
     @property
     def output_dim(self):
-        return 2
+        return 2 

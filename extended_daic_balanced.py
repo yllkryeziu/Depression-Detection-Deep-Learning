@@ -3,6 +3,7 @@ import shutil
 from typing import Dict, List, Optional, Union
 import requests
 import tarfile
+import random
 
 from omegaconf import DictConfig
 import pandas as pd
@@ -16,8 +17,8 @@ from tqdm import tqdm
 from autrainer.datasets import BaseClassificationDataset
 
 """
-Load the dataset base url from the environment variables.
-You should request access to the dataset from the authors
+Extended DAIC dataset with balanced training data.
+This variant ensures equal numbers of depressed and non-depressed patients in training.
 """
 
 load_dotenv()
@@ -32,12 +33,25 @@ DEFAULT_OVERLAP_RATIO = 0.33  # 33% overlap
 
 
 def load_patient_ids(patient_ids_file: str = "patient_ids.txt") -> List[int]:
+    """
+    Load patient IDs from a file.
+    
+    Args:
+        patient_ids_file: Path to the file containing patient IDs (one per line)
+        
+    Returns:
+        List of patient IDs as integers
+        
+    Raises:
+        FileNotFoundError: If the patient IDs file is not found
+        ValueError: If the file contains invalid patient IDs
+    """
     try:
         with open(patient_ids_file, 'r') as f:
             patient_ids = []
             for line in f:
                 line = line.strip()
-                if line:  # Skip empty lines
+                if line and not line.startswith('#'):  # Skip empty lines and comments
                     try:
                         patient_ids.append(int(line))
                     except ValueError:
@@ -104,17 +118,12 @@ def create_overlapping_segments(
     return segments
 
 
-class ExtendedDAIC_fixed(BaseClassificationDataset):
+class ExtendedDAIC_balanced(BaseClassificationDataset):
     """
-    E-DAIC dataset for depression detection.
-
-    download():
-      • Fetch train/dev/test CSVs
-      • Download & extract each <pid>_P.tar.gz with progress visualization
-      • Prune to keep only <pid>_AUDIO.wav and <pid>_Transcript.csv, delete archive
-
-    preprocess():
-      • Split utterances (slice by transcript timestamps) and save as individual files
+    Extended DAIC dataset with balanced training data.
+    
+    This variant balances the training split by removing excess non-depressed patients
+    to match the number of depressed patients, ensuring equal class representation.
     """
 
     def __init__(
@@ -138,6 +147,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
         train_transform=None,
         dev_transform=None,
         test_transform=None,
+        balance_seed: int = 42,
         **kwargs,
     ) -> None:
         self.split_utterances = split_utterances
@@ -145,6 +155,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
         self.buffer_sec = buffer_sec
         self.max_utt_sec = max_utt_sec
         self.chunk_dur = chunk_dur
+        self.balance_seed = balance_seed
 
         if patient_range:
             self.patient_ids = list(range(patient_range[0], patient_range[1]))
@@ -295,7 +306,44 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
             return False
 
     @staticmethod
-    def download(path: str) -> None:
+    def _balance_training_data(utterance_df: pd.DataFrame, temp_csvs: Dict, balance_seed: int = 42) -> pd.DataFrame:
+        """Balance training data by removing excess non-depressed patients."""
+        # Get training patients
+        train_patients = set(temp_csvs["train_split.csv"]["Participant_ID"].tolist())
+        train_utterances = utterance_df[utterance_df["Participant_ID"].isin(train_patients)]
+        
+        # Separate by depression status
+        depressed_patients = train_utterances[train_utterances["PHQ_Binary"] == 1]["Participant_ID"].unique()
+        non_depressed_patients = train_utterances[train_utterances["PHQ_Binary"] == 0]["Participant_ID"].unique()
+        
+        print(f"\nBALANCING TRAINING DATA:")
+        print(f"  Original - Depressed: {len(depressed_patients)}, Non-Depressed: {len(non_depressed_patients)}")
+        
+        # If already balanced or fewer non-depressed, no need to balance
+        if len(non_depressed_patients) <= len(depressed_patients):
+            print(f"  Training data already balanced or has fewer non-depressed patients.")
+            return utterance_df
+        
+        # Randomly select non-depressed patients to keep
+        random.seed(balance_seed)
+        selected_non_depressed = random.sample(list(non_depressed_patients), len(depressed_patients))
+        
+        # Create balanced training set
+        balanced_train_patients = set(depressed_patients) | set(selected_non_depressed)
+        
+        # Remove excess non-depressed patients from training data
+        balanced_utterances = utterance_df[
+            ~utterance_df["Participant_ID"].isin(train_patients) |  # Keep non-training data
+            utterance_df["Participant_ID"].isin(balanced_train_patients)  # Keep balanced training data
+        ]
+        
+        print(f"  Balanced - Depressed: {len(depressed_patients)}, Non-Depressed: {len(selected_non_depressed)}")
+        print(f"  Removed {len(non_depressed_patients) - len(selected_non_depressed)} non-depressed patients from training")
+        
+        return balanced_utterances
+
+    @staticmethod
+    def download(path: str, balance_seed: int = 42) -> None:
         p = Path(path)
         p.mkdir(parents=True, exist_ok=True)
 
@@ -310,7 +358,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
             temp_csv = os.path.join(p, f"temp_{split}")
             if not os.path.exists(temp_csv):
                 url = os.path.join(BASE_URL, "labels", split)
-                if ExtendedDAIC_fixed._download_file(url, temp_csv, f"Downloading {split}"):
+                if ExtendedDAIC_balanced._download_file(url, temp_csv, f"Downloading {split}"):
                     print(f"Successfully downloaded {temp_csv}")
                 else:
                     continue
@@ -324,6 +372,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
 
         all_utterance_data = []
 
+        # Process patients (same as base class)
         for pid in DEFAULT_PATIENT_IDS:
             archive_name = f"{pid}_P.tar.gz"
             archive_url = os.path.join(BASE_URL, "data", archive_name)
@@ -338,10 +387,10 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
             
             if existing_utterances:
                 print(f"Patient {pid} utterances already exist in flat structure. Skipping download.")
-                patient_info = ExtendedDAIC_fixed._get_patient_info(pid, temp_csvs)
+                patient_info = ExtendedDAIC_balanced._get_patient_info(pid, temp_csvs)
                 if patient_info is not None:
                     for utterance_file in existing_utterances:
-                        utterance_data = ExtendedDAIC_fixed._create_utterance_data(
+                        utterance_data = ExtendedDAIC_balanced._create_utterance_data(
                             utterance_file, pid, patient_info
                         )
                         all_utterance_data.append(utterance_data)
@@ -354,12 +403,12 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
 
                 if wav_files and transcript_files:
                     print(f"Patient {pid} WAV and transcript already exist. Processing existing files...")
-                    patient_info = ExtendedDAIC_fixed._get_patient_info(pid, temp_csvs)
+                    patient_info = ExtendedDAIC_balanced._get_patient_info(pid, temp_csvs)
                     if patient_info is None:
                         print(f"No patient information found for {pid}, skipping...")
                         continue
 
-                    utterance_count = ExtendedDAIC_fixed._process_audio_and_transcript(
+                    utterance_count = ExtendedDAIC_balanced._process_audio_and_transcript(
                         patient_extract_dir, pid, patient_info, default_dir
                     )
                     
@@ -367,7 +416,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                         # Create utterance data for each segment
                         for i in range(utterance_count):
                             utterance_filename = f"{pid}_{i:04d}.wav"
-                            utterance_data = ExtendedDAIC_fixed._create_utterance_data(
+                            utterance_data = ExtendedDAIC_balanced._create_utterance_data(
                                 utterance_filename, pid, patient_info
                             )
                             all_utterance_data.append(utterance_data)
@@ -382,7 +431,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
 
             print(f"Processing patient {pid}: Downloading {archive_name}...")
             
-            if not ExtendedDAIC_fixed._download_file(archive_url, local_archive_path, f"Downloading {archive_name}"):
+            if not ExtendedDAIC_balanced._download_file(archive_url, local_archive_path, f"Downloading {archive_name}"):
                 continue
 
             try:
@@ -398,12 +447,12 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 print(f"Extraction complete for patient {pid}")
 
                 # Get patient information and process audio
-                patient_info = ExtendedDAIC_fixed._get_patient_info(pid, temp_csvs)
+                patient_info = ExtendedDAIC_balanced._get_patient_info(pid, temp_csvs)
                 if patient_info is None:
                     print(f"No patient information found for {pid}, skipping...")
                     continue
 
-                utterance_count = ExtendedDAIC_fixed._process_audio_and_transcript(
+                utterance_count = ExtendedDAIC_balanced._process_audio_and_transcript(
                     patient_extract_dir, pid, patient_info, default_dir
                 )
                 
@@ -411,7 +460,7 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                     # Create utterance data for each segment
                     for i in range(utterance_count):
                         utterance_filename = f"{pid}_{i:04d}.wav"
-                        utterance_data = ExtendedDAIC_fixed._create_utterance_data(
+                        utterance_data = ExtendedDAIC_balanced._create_utterance_data(
                             utterance_filename, pid, patient_info
                         )
                         all_utterance_data.append(utterance_data)
@@ -426,18 +475,22 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 if os.path.exists(local_archive_path):
                     os.remove(local_archive_path)
 
-        # Create CSV files with utterance-level data
-        print("Creating utterance-level CSV files...")
+        # Create DataFrame and balance training data
         utterance_df = pd.DataFrame(all_utterance_data)
-
+        
         if utterance_df.empty:
             print("Warning: No utterance data found!")
             return
 
+        # Balance training data
+        balanced_utterance_df = ExtendedDAIC_balanced._balance_training_data(utterance_df, temp_csvs, balance_seed)
+
+        # Create CSV files with balanced data
+        print("Creating balanced CSV files...")
         for split_file, temp_csv_data in temp_csvs.items():
             split_name = split_file.replace("_split.csv", ".csv")
             split_patients = set(temp_csv_data["Participant_ID"].tolist())
-            split_utterances = utterance_df[utterance_df["Participant_ID"].isin(split_patients)]
+            split_utterances = balanced_utterance_df[balanced_utterance_df["Participant_ID"].isin(split_patients)]
 
             if not split_utterances.empty:
                 output_csv = os.path.join(p, split_name)
@@ -453,15 +506,15 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 os.remove(temp_csv)
 
         # Generate and display patient statistics
-        ExtendedDAIC_fixed._generate_patient_statistics(utterance_df, temp_csvs)
+        ExtendedDAIC_balanced._generate_patient_statistics(balanced_utterance_df, temp_csvs)
 
-        print("All patient data processing completed.")
+        print("All balanced patient data processing completed.")
 
     @staticmethod
     def _generate_patient_statistics(utterance_df: pd.DataFrame, temp_csvs: Dict) -> None:
         """Generate and display patient statistics after download completion."""
         print("\n" + "="*60)
-        print("PATIENT STATISTICS OVERVIEW")
+        print("BALANCED PATIENT STATISTICS OVERVIEW")
         print("="*60)
         
         # Overall statistics
@@ -507,27 +560,15 @@ class ExtendedDAIC_fixed(BaseClassificationDataset):
                 print(f"    Utterances: {split_total}")
                 print(f"    Depressed: {split_depressed_patients} patients, {split_depressed} utterances ({split_depressed/split_total*100:.1f}%)")
                 print(f"    Non-Depressed: {split_non_depressed_patients} patients, {split_non_depressed} utterances ({split_non_depressed/split_total*100:.1f}%)")
+                
+                # Highlight balance for training split
+                if split_name == "TRAIN":
+                    balance_ratio = split_depressed_patients / split_non_depressed_patients if split_non_depressed_patients > 0 else float('inf')
+                    print(f"    Balance Ratio: {balance_ratio:.2f} (1.0 = perfectly balanced)")
                 print()
-        
-        # PHQ score distribution
-        print("PHQ SCORE DISTRIBUTION:")
-        phq_stats = utterance_df.groupby('Participant_ID')['PHQ_Score'].first()
-        print(f"  Mean PHQ Score: {phq_stats.mean():.2f}")
-        print(f"  Median PHQ Score: {phq_stats.median():.2f}")
-        print(f"  PHQ Score Range: {phq_stats.min():.0f} - {phq_stats.max():.0f}")
-        
-        # PHQ score bins
-        bins = [0, 5, 10, 15, 20, 27]
-        labels = ['Minimal (0-4)', 'Mild (5-9)', 'Moderate (10-14)', 'Moderately Severe (15-19)', 'Severe (20-27)']
-        phq_binned = pd.cut(phq_stats, bins=bins, labels=labels, include_lowest=True)
-        phq_counts = phq_binned.value_counts().sort_index()
-        
-        print("  PHQ Score Categories:")
-        for category, count in phq_counts.items():
-            print(f"    {category}: {count} patients ({count/len(phq_stats)*100:.1f}%)")
         
         print("="*60)
 
     @property
     def output_dim(self):
-        return 2
+        return 2 
