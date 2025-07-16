@@ -7,6 +7,6 @@
 #SBATCH --output=.slurm_outputs/slurm_%A.out
 
 echo "Starting ..."
-autrainer preprocess
+autrainer preprocess -cn config-augmented.yaml
 echo "Job finished."
 

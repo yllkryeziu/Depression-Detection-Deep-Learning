@@ -2,10 +2,10 @@
 #SBATCH --time=24:00:00
 #SBATCH --partition=students
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=12
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=4G
 #SBATCH --output=.slurm_outputs/slurm_%A.out
 
 echo "Starting data copy..."
-cp -r data/ExtendedDAIC-16k data/ExtendedDAIC-wav
+rsync -av --progress data/ExtendedDAIC-16k/patients/ data/ExtendedDAIC-16k-balanced/patients/
 echo "Data copy finished." 

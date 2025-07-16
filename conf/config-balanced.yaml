@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 results_dir: results
-experiment_id: cnn10-binary-balanced-experiment
+experiment_id: cnn10-binary-balanced-experiment-specaugment
 iterations: 50
 
 hydra:
@@ -15,3 +15,5 @@ hydra:
       dataset: ExtendedDAIC-16k-balanced
       model: CNN10-binary,CNN10-binary-frozen
       optimizer: Adam 
+      augmentation: SpecAugment
+      scheduler: ReduceLROnPlateau

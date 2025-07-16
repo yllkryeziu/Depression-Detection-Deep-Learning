@@ -7,6 +7,6 @@
 #SBATCH --output=.slurm_outputs/slurm_%A.out
 
 echo "Starting ..."
-autrainer train
+autrainer train -cn config-balanced.yaml
 echo "Job finished."
 
