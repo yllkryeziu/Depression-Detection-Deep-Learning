@@ -1,6 +1,8 @@
 defaults:
   - _autrainer_
   - _self_
+  - augmentation: SpecAugment
+  - scheduler: ReduceLROnPlateau
 
 results_dir: results
 experiment_id: cnn10-binary-fixed-experiment
@@ -15,5 +17,6 @@ hydra:
       dataset: ExtendedDAIC-16k-fixed
       model: CNN10-binary,CNN10-binary-frozen
       optimizer: Adam 
-      augmentation: SpecAugment
-      scheduler: ReduceLROnPlateau
+loggers:
+  - wandb_logger.WandBLogger:
+      output_dir: ${results_dir}/.wandb
