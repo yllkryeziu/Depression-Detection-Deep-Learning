@@ -15,6 +15,7 @@ hydra:
       dataset: ExtendedDAIC-16k-augmented
       model: CNN10-binary,CNN10-binary-frozen
       optimizer: Adam 
+      scheduler: ReduceLROnPlateau
 loggers:
   - wandb_logger.WandBLogger:
       output_dir: ${results_dir}/.wandb
