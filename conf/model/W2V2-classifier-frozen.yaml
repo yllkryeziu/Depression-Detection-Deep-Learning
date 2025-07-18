@@ -1,0 +1,10 @@
+id: W2V2-classifier-frozen
+_target_: w2v2_classifier.W2V2ClassifierFrozen
+
+model_name: facebook/wav2vec2-base
+hidden_dim: 128
+dropout: 0.3
+transfer: true
+
+transform:
+  type: raw 

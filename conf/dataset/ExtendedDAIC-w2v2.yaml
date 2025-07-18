@@ -1,0 +1,23 @@
+id: ExtendedDAIC-w2v2
+_target_: extended_daic_w2v2.ExtendedDAIC_w2v2
+
+path: data/ExtendedDAIC-w2v2
+features_subdir: default
+index_column: filename
+target_column: PHQ_Binary
+file_type: wav
+file_handler: autrainer.datasets.utils.AudioFileHandler
+
+criterion: autrainer.criterions.BalancedCrossEntropyLoss
+metrics: 
+  - autrainer.metrics.Accuracy
+  - autrainer.metrics.UAR
+  - autrainer.metrics.F1
+tracking_metric: autrainer.metrics.UAR
+
+transform:
+  type: raw
+  base:
+    - autrainer.transforms.Expand:
+        size: 80000
+        axis: -1 

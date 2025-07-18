@@ -1,0 +1,18 @@
+defaults:
+  - _autrainer_
+  - _self_
+
+results_dir: results
+experiment_id: w2v2-experiment
+iterations: 50
+
+hydra:
+  sweeper:
+    params:
+      +seed: 1
+      +batch_size: 32
+      +learning_rate: 0.0001
+      dataset: ExtendedDAIC-w2v2
+      model: W2V2-classifier-frozen, W2V2-classifier-finetuned
+      optimizer: Adam 
+      scheduler: StepLR
