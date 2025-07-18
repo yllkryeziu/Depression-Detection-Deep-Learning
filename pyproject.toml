@@ -5,7 +5,7 @@ description = "minimal uv environment"
 requires-python = ">=3.10"
 authors = ["Yll Kryeziu <yll.kryeziu@tum.de>"]
 dependencies = [
-    "pillow",
+    "wandb",
     "autrainer",
     "python-dotenv"
 ]
