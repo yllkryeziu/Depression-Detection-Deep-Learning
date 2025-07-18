@@ -13,6 +13,6 @@ hydra:
       +batch_size: 32
       +learning_rate: 0.0001
       dataset: ExtendedDAIC-w2v2
-      model: W2V2-classifier-frozen, W2V2-classifier-finetuned
+      model: W2V2-classifier-finetuned
       optimizer: Adam 
       scheduler: StepLR

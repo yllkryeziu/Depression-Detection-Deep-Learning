@@ -6,7 +6,7 @@ from transformers import Wav2Vec2Config, Wav2Vec2Model
 from autrainer.models.abstract_model import AbstractModel
 
 
-class W2V2Backbone(AbstractModel):
+class W2V2Backbone(nn.Module):
     def __init__(
         self,
         model_name,
@@ -14,6 +14,7 @@ class W2V2Backbone(AbstractModel):
         time_pooling: bool = True,
         transfer: bool = False,
     ) -> None:
+        super().__init__()
         self.model_name = model_name
         self.freeze_extractor = freeze_extractor
         self.time_pooling = time_pooling
@@ -29,8 +30,8 @@ class W2V2Backbone(AbstractModel):
                     return_dict=True,
                 )
                 model = Wav2Vec2Model(config)
-        super().__init__(model.config.hidden_size)
         self.model = model
+        self.output_dim = model.config.hidden_size
         if self.freeze_extractor:
             self.model.freeze_feature_encoder()
 
