@@ -17,6 +17,7 @@ class W2V2Backbone(AbstractModel):
         self.model_name = model_name
         self.freeze_extractor = freeze_extractor
         self.time_pooling = time_pooling
+        self.transfer = transfer
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             if transfer:  # pragma: no cover
@@ -28,10 +29,7 @@ class W2V2Backbone(AbstractModel):
                     return_dict=True,
                 )
                 model = Wav2Vec2Model(config)
-        super().__init__(
-            output_dim=model.config.hidden_size,
-            transfer=transfer,
-        )
+        super().__init__(model.config.hidden_size)
         self.model = model
         if self.freeze_extractor:
             self.model.freeze_feature_encoder()
@@ -93,11 +91,12 @@ class W2V2Classifier(AbstractModel):
             transfer: Whether to initialize the Wave2Vec2 backbone with
                 pretrained weights. Defaults to False.
         """
-        super().__init__(output_dim, transfer)
+        super().__init__(output_dim)
         self.model_name = model_name
         self.freeze_extractor = freeze_extractor
         self.hidden_dim = hidden_dim
         self.dropout = dropout
+        self.transfer = transfer
         
         # Initialize Wave2Vec2 backbone
         self.backbone = W2V2Backbone(
