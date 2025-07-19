@@ -7,6 +7,6 @@
 #SBATCH --output=.slurm_outputs/slurm_%A.out
 
 echo "Starting ..."
-autrainer preprocess -cn config-augmented.yaml
+python extract_cnn_features.py --data_path data/ExtendedDAIC-lstm --output_path data/ExtendedDAIC-lstm/ --model_path cnn10model.pt
 echo "Job finished."
 

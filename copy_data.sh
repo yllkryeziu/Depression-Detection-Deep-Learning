@@ -7,5 +7,5 @@
 #SBATCH --output=.slurm_outputs/slurm_%A.out
 
 echo "Starting data copy..."
-rsync -av --progress data/ExtendedDAIC-16k/patients/ data/ExtendedDAIC-16k-balanced/patients/
+rsync -av --progress data/ExtendedDAIC-16k-fixed/patients/ data/ExtendedDAIC-16k-lstm/patients/
 echo "Data copy finished." 

@@ -1,7 +1,7 @@
-id: ExtendedDAIC-16k-fixed
-_target_: extended_daic_fixed.ExtendedDAIC_fixed
+id: ExtendedDAIC-lstm
+_target_: extended_daic_lstm.ExtendedDAIC_fixed
 
-path: data/ExtendedDAIC-16k-fixed
+path: data/ExtendedDAIC-lstm
 features_subdir: log_mel_16k
 index_column: filename
 target_column: PHQ_Binary
