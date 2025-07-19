@@ -193,3 +193,4 @@ devenv.local.nix
 # slurm
 .slurm_outputs/
 _README.md
+wandb
