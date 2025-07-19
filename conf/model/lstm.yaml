@@ -1,0 +1,7 @@
+id: lstm
+_target_: lstm.LSTM
+
+feature_dim: 512          # CNN10 feature dimension
+lstm_hidden_size: 128     # Hidden size of LSTM layers
+lstm_num_layers: 3        # Number of LSTM layers (2 or 3 recommended)
+lstm_dropout: 0.3         # Dropout rate between LSTM layers 

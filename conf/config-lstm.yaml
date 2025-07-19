@@ -13,6 +13,6 @@ hydra:
       +batch_size: 32
       +learning_rate: 0.0001
       dataset: ExtendedDAIC-lstm
-      model: CNN10-binary,CNN10-binary-frozen
+      model: lstm
       optimizer: Adam 
       scheduler: StepLR
