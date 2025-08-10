@@ -194,3 +194,4 @@ devenv.local.nix
 .slurm_outputs/
 _README.md
 wandb
+data_raw

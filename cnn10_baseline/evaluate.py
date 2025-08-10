@@ -5,7 +5,7 @@ import hydra
 from omegaconf import DictConfig
 from sklearn.metrics import recall_score, f1_score, precision_score, accuracy_score, confusion_matrix
 
-from ..data.common import create_segment_loaders
+from shared.common import create_segment_loaders
 from .models import CNN10
 
 

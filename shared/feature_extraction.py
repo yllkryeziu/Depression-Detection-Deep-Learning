@@ -7,10 +7,10 @@ from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig
 
-from ..cnn10_baseline.models import CNN10
+from cnn10_baseline.models import CNN10
 
 
-@hydra.main(config_path="cnn10_baseline/conf", config_name="config", version_base="1.3")
+@hydra.main(config_path="../cnn10_baseline/conf", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     features_dir = Path(cfg.paths.features_dir)

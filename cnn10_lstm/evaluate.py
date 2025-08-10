@@ -5,7 +5,7 @@ import hydra
 from omegaconf import DictConfig
 from sklearn.metrics import recall_score, f1_score, precision_score, accuracy_score, confusion_matrix
 
-from ..data.common import FeatureSequenceDataset, pad_feature_batch
+from shared.common import FeatureSequenceDataset, pad_feature_batch
 from .models import PatientLSTM
 
 

@@ -7,8 +7,8 @@ from omegaconf import DictConfig
 import wandb
 from sklearn.metrics import recall_score, f1_score, precision_score, accuracy_score
 
-from ..data.common import create_segment_loaders
-from .models import CNN10
+from shared.common import FeatureSequenceDataset, pad_feature_batch
+from .models import PatientLSTM
 
 
 def compute_metrics(targets, preds):
@@ -30,12 +30,25 @@ def main(cfg: DictConfig) -> None:
         wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, config=cfg, tags=list(cfg.wandb.tags))
 
     root = Path(cfg.paths.data_root)
-    train_loader, dev_loader, _ = create_segment_loaders(root, cfg.train.batch_size, cfg.train.num_workers)
+    train_ds = FeatureSequenceDataset(root / "train.csv")
+    dev_ds = FeatureSequenceDataset(root / "dev.csv")
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=cfg.train.batch_size, shuffle=True, num_workers=cfg.train.num_workers, collate_fn=pad_feature_batch)
+    dev_loader = torch.utils.data.DataLoader(dev_ds, batch_size=cfg.train.batch_size, shuffle=False, num_workers=cfg.train.num_workers, collate_fn=pad_feature_batch)
 
-    model = CNN10(num_classes=cfg.model.num_classes, dropout=cfg.model.dropout).to(device)
+    r = cfg.model.rnn
+    model = PatientLSTM(
+        input_dim=cfg.model.segment_feature_dim,
+        hidden_size=r.hidden_size,
+        num_layers=r.num_layers,
+        dropout_lstm=r.dropout,
+        bidirectional=r.bidirectional,
+        classifier_dropout=cfg.model.classifier_dropout,
+        num_classes=cfg.model.num_classes,
+    ).to(device)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.learning_rate, weight_decay=cfg.train.weight_decay)
 
-    y_train = [int(y.item()) for _, y, _ in train_loader.dataset]
+    y_train = [int(y.item()) for _, y, _ in train_ds]
     num_neg = y_train.count(0)
     num_pos = y_train.count(1)
     pos_weight = torch.tensor([num_neg / max(1, num_pos)], dtype=torch.float32, device=device) if cfg.train.pos_weight_auto else torch.tensor([1.0], device=device)
@@ -46,10 +59,10 @@ def main(cfg: DictConfig) -> None:
     for epoch in range(cfg.train.epochs):
         model.train()
         total_loss = 0.0
-        for xb, yb, _ in train_loader:
+        for xb, lengths, yb, _ in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            logits = model(xb).squeeze()
+            logits = model(xb, lengths).squeeze()
             loss = criterion(logits, yb)
             loss.backward()
             if cfg.train.gradient_clip_norm is not None:
@@ -61,9 +74,9 @@ def main(cfg: DictConfig) -> None:
         val_loss = 0.0
         preds, targets = [], []
         with torch.no_grad():
-            for xb, yb, _ in dev_loader:
+            for xb, lengths, yb, _ in dev_loader:
                 xb, yb = xb.to(device), yb.to(device)
-                logits = model(xb).squeeze()
+                logits = model(xb, lengths).squeeze()
                 val_loss += criterion(logits, yb).item()
                 preds.extend((torch.sigmoid(logits) > 0.5).long().cpu().numpy().tolist())
                 targets.extend(yb.long().cpu().numpy().tolist())
@@ -81,7 +94,7 @@ def main(cfg: DictConfig) -> None:
         if m["uar"] > best_val:
             best_val = m["uar"]
             patience = 0
-            ckpt = Path(cfg.paths.runs_dir) / "cnn10_best.pt"
+            ckpt = Path(cfg.paths.runs_dir) / "patient_lstm_best.pt"
             torch.save({"state_dict": model.state_dict(), "cfg": cfg}, ckpt)
         else:
             patience += 1

@@ -7,7 +7,7 @@ from omegaconf import DictConfig
 from collections import defaultdict
 from sklearn.metrics import recall_score, f1_score, precision_score, accuracy_score
 
-from ..shared.common import create_segment_loaders
+from shared.common import create_segment_loaders
 from .models import CNN10
 
 
