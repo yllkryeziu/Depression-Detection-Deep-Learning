@@ -1,0 +1,28 @@
+defaults:
+  - _self_
+  - dataset
+  - model: patient_lstm
+  - train
+  - eval
+
+project:
+  name: ExtendedDAIC-CNN10-LSTM-Patient
+
+paths:
+  data_root: ${oc.env:DATA_ROOT,${hydra:runtime.cwd}/data/ExtendedDAIC-pipeline}
+  raw_dir: ${paths.data_root}/raw
+  patients_dir: ${paths.raw_dir}/patients
+  segments_dir: ${paths.data_root}/segments
+  mels_dir: ${paths.data_root}/mels
+  features_dir: ${paths.data_root}/features
+  runs_dir: ${paths.data_root}/runs
+
+wandb:
+  enabled: true
+  project: ${project.name}
+  entity: null
+  tags: []
+
+seed: 42
+
+

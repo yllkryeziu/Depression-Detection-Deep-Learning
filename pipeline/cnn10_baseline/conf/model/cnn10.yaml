@@ -1,0 +1,6 @@
+model:
+  name: cnn10
+  num_classes: 1
+  dropout: 0.3
+
+

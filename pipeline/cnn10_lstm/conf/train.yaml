@@ -1,0 +1,13 @@
+train:
+  epochs: 50
+  batch_size: 16
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  num_workers: 4
+  gradient_clip_norm: 1.0
+  pos_weight_auto: true
+  early_stopping_patience: 10
+  monitor: val_uar
+  monitor_mode: max
+
+

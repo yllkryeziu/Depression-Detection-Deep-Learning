@@ -27,3 +27,4 @@ hydra-core>=1.3
 ffmpeg-python
 
 python-dotenv
+wandb>=0.16

@@ -1,0 +1,13 @@
+model:
+  name: patient_lstm
+  segment_feature_dim: 512
+  rnn:
+    type: lstm
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.4
+    bidirectional: true
+  classifier_dropout: 0.5
+  num_classes: 1
+
+

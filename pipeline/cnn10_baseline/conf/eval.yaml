@@ -1,0 +1,6 @@
+eval:
+  batch_size: 64
+  num_workers: 4
+  ckpt_path: null
+
+

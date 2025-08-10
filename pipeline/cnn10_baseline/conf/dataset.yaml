@@ -1,0 +1,19 @@
+dataset:
+  base_url: ${oc.env:BASE_URL,null}
+  sample_rate: 16000
+  buffer_sec: 0.25
+  max_utt_sec: 90.0
+  segment_sec: 6.0
+  overlap_ratio: 0.33
+  num_mels: 64
+  n_fft: 1024
+  hop_length: 320
+  win_length: 640
+  f_min: 50
+  f_max: 7600
+  top_db: 80
+  patients:
+    from_file: ${oc.env:PATIENT_IDS_FILE,${hydra:runtime.cwd}/patient_ids.txt}
+    default_ranges: [[300,493],[600,719]]
+
+
