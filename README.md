@@ -1,4 +1,4 @@
-### ExtendedDAIC Pipeline Layout
+### Depression Detection on ExtendedDAIC using CNN+LSTM approach
 
 This pipeline downloads ExtendedDAIC, filters to patient-only speech using transcripts, splits into segments, builds mels, and provides two approaches organized as separate modules:
 - `cnn10_baseline/`: Segment-level CNN10 classification (+ optional majority vote to patient). Uses its own Hydra configs under `cnn10_baseline/conf/`.
