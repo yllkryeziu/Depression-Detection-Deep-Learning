@@ -1,60 +1,151 @@
-# Depression Detection on ExtendedDAIC using CNN+LSTM approach
+# Depression Detection from Audio
 
-This pipeline downloads ExtendedDAIC, filters to patient-only speech using transcripts, splits into segments, builds mels, and provides two approaches organized as separate modules:
-- `cnn10_baseline/`: Segment-level CNN10 classification (+ optional majority vote to patient). Uses its own Hydra configs under `cnn10_baseline/conf/`.
-- `cnn10_lstm/`: Patient-level LSTM over CNN10 segment features. Uses its own Hydra configs under `cnn10_lstm/conf/`.
+This repository contains a set of experiments for detecting depression from speech using deep learning models. The project leverages the `autrainer` toolkit, which is a modular framework built on PyTorch and Hydra for reproducible computer audition research.
 
-### Approach
-- CNN10 is fine-tuned end-to-end on mel spectrogram segments to predict depression at the segment level.
-- The fine-tuned CNN10 is then used as a frozen feature extractor to produce a 512-d feature per segment and write it back to the CSVs (`feature_path`).
-- An LSTM consumes per-patient sequences of these segment features (grouped by `Participant_ID`) to predict depression at the patient level.
+The primary goal is to classify patients as depressive or non-depressive based on features extracted from their speech. Two main architectural approaches are explored:
+1.  A **CNN10 model** trained directly on log-Mel spectrograms for binary classification.
+2.  A **CNN-LSTM model** that uses a pre-trained CNN10 as a feature extractor, followed by an LSTM with an attention mechanism to model temporal sequences.
 
-### Setup
-- Create `.env` with `BASE_URL` pointing to dataset host.
-- Optionally create `patient_ids.txt` with one `Participant_ID` per line. Otherwise default ranges in `conf/dataset.yaml` are used.
-- Ensure requirements are installed.
+## Project Structure
 
-### Configuration
-Each approach has its own configs:
-- Baseline: `cnn10_baseline/conf/`
-- Patient LSTM: `cnn10_lstm/conf/`
+The repository is organized to support reproducible experiments with `autrainer` and Hydra.
 
-Use hydra overrides as needed, e.g. `train.epochs=80 dataset.segment_sec=8.0`.
-
-### Steps
-1) Download
-```bash
-python -m shared.download paths.data_root=/abs/path/to/data
 ```
-Creates `raw/`, `patients/`, `default/`, and `raw/transcripts/`. Writes `train.csv`, `dev.csv`, `test.csv` with utterance-level rows.
-
-2) Preprocess
-```bash
-python -m shared.preprocess paths.data_root=/abs/path/to/data
+/
+├── conf/              # Hydra/autrainer configuration files for datasets, models, etc.
+├── data/              # Processed data (e.g., features, spectrograms).
+├── data_raw/          # Raw data downloaded by the fetch command.
+├── results/           # Experiment outputs, logs, and trained models.
+├── src/               # Optional directory for custom Python source code.
+├── requirements.txt   # Project dependencies.
+├── fetch.sh           # Helper script to download data.
+├── preprocess.sh      # Helper script to preprocess data.
+├── train.sh           # Helper script to run training.
+├── postprocess.sh     # Helper script to analyze results.
+└── README.md          # This file.
 ```
-Parses transcripts to keep only the patient's utterances, concatenates them, then produces `segments/` wavs and `mels/` npy files. Updates CSVs with `segment_path`, `mel_path`, `segment_index`.
 
-3) Train and extract features
+## 1. Setup and Installation
+
+Follow these steps to set up the environment and install the necessary dependencies.
+
+**1.1. Clone the Repository**
 ```bash
-python -m cnn10_baseline.train model=cnn10 paths.data_root=/abs/path/to/data
-python -m shared.feature_extraction paths.data_root=/abs/path/to/data
-python -m cnn10_lstm.train model=patient_lstm paths.data_root=/abs/path/to/data
+git clone <repository-url>
+cd <repository-name>
 ```
-This trains CNN10 on segments, extracts segment features using the trained CNN10, and then trains the patient-level LSTM.
-Saves best checkpoints to `runs/cnn10_best.pt` and `runs/patient_lstm_best.pt`.
 
-4) Evaluate
+**1.2. Create a Virtual Environment**
+It is highly recommended to use a virtual environment.
 ```bash
-python -m cnn10_baseline.evaluate paths.data_root=/abs/path/to/data eval.ckpt_path=/path/to/cnn10_best.pt
-python -m cnn10_baseline.majority_vote paths.data_root=/abs/path/to/data
-python -m cnn10_lstm.evaluate model=patient_lstm paths.data_root=/abs/path/to/data eval.ckpt_path=/path/to/patient_lstm_best.pt
+python -m venv venv
+source venv/bin/activate
 ```
-Prints metrics and logs to W&B if enabled.
 
-### Notes
-- Audio is resampled to 16 kHz. 48 kHz inputs are skipped.
-- Segments are of fixed length with configurable overlap. Short tail segments are padded.
-- Mel spectrogram parameters are configurable in `dataset.yaml`.
-- Transcript parsing auto-detects `speaker`/`talker` column and selects the participant/patient rows (heuristics for names like "participant", "patient", "subject", or not "ellie").
+**1.3. Install Dependencies**
+Install all required packages, including `autrainer` and its dependencies.
+```bash
+pip install -r requirements.txt
+```
+This project may require `openSMILE` for certain feature extraction configurations. If needed, install it separately and ensure it's available in your system's PATH. You can install the optional `opensmile` dependency for `autrainer` with:
+```bash
+pip install autrainer[opensmile]
+```
 
+## 2. Data Preparation
 
+The experiments rely on the Extended DAIC-WOZ dataset. The following commands will download and preprocess the data into the required format.
+
+**2.1. Fetch Data**
+This command downloads the necessary datasets and pre-trained model weights specified in the configuration files.
+```bash
+autrainer fetch
+```
+Alternatively, you can use the provided shell script: `./fetch.sh`
+
+**2.2. Preprocess Data**
+This command processes the raw audio files into the features required for training (e.g., log-Mel spectrograms). The configurations in the `conf/` directory are set up to handle this automatically.
+```bash
+autrainer preprocess
+```
+Alternatively, you can use the provided shell script: `./preprocess.sh`
+
+## 3. Running Experiments
+
+All experiments are managed by `autrainer` and can be launched from the command line. The results, including logs, model checkpoints, and plots, will be saved in the `results/` directory.
+
+### Experiment 1: CNN10 Binary Classification
+
+This experiment trains a CNN10 model directly on log-Mel spectrograms for end-to-end depression classification. Several configurations are provided.
+
+To run the baseline training with a fixed dataset split:
+```bash
+autrainer train -cn config-fixed
+```
+
+To run with data augmentation:
+```bash
+autrainer train -cn config-augmented
+```
+
+To run with a class-balanced dataset:
+```bash
+autrainer train -cn config-balanced
+```
+
+### Experiment 2: CNN-LSTM Training
+
+This workflow involves two stages: extracting features with the CNN, and then training the LSTM on those features.
+
+**3.2.1. Extract CNN Features**
+First, run the feature extraction script. This uses the pre-trained CNN10 model to generate feature sequences for each patient and saves them in `data/ExtendedDAIC-lstm/features/`.
+```bash
+python extract_cnn_features.py \
+    --data_path data/ExtendedDAIC-16k \
+    --output_path data/ExtendedDAIC-lstm \
+    --model_path model.pt
+```
+
+**3.2.2. Train the LSTM Model**
+Once the features are extracted, train the LSTM model. This script runs a standalone training process and logs results to Weights & Biases.
+```bash
+python lstm_standalone.py
+```
+
+## 4. Post-processing and Analyzing Results
+
+`autrainer` provides powerful tools to analyze the results of your experiments, especially for grid searches.
+
+To summarize the results of an experiment and aggregate across different seeds:
+```bash
+# Replace <experiment_id> with the one from your config (e.g., cnn10-fixed)
+autrainer postprocess results/<experiment_id> --aggregate seed
+```
+This will generate summary CSVs and plots in the `results/<experiment_id>/summary/` directory. You can also use the helper script: `./postprocess.sh <experiment_id>`.
+
+## 5. Inference
+
+To run inference on new audio files using a trained model, use the `autrainer inference` command.
+
+You need to point to a trained model directory, an input directory with audio files, and an output directory.
+
+```bash
+# Example command for a trained model from the 'cnn10-fixed' experiment
+# Note: The path to the specific run may vary.
+autrainer inference \
+    results/cnn10-fixed/training/ExtendedDAIC-16k-fixed_CNN10-binary_Adam_0.0001_32_epoch_50_None_None_42/ \
+    /path/to/your/input_audio/ \
+    /path/to/your/output_predictions/ \
+    --preprocess-cfg log_mel_16k \
+    --device cuda:0
+```
+
+## 6. Manual Evaluation
+
+The repository includes a script to manually calculate detailed metrics from prediction files. After generating `depression_predictions.csv` and `snippet_predictions.csv` (e.g., using `predict_depression.py`), you can get a full evaluation report.
+
+```bash
+python calculate_metrics.py
+```
+
+```

@@ -172,6 +172,7 @@ cython_debug/
 
 # Large files
 data
+data_raw
 outputs
 results
 autrainer-main
