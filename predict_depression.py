@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Depression Prediction Script using CNN10 Model
 
