@@ -1,0 +1,10 @@
+id: CNN10-binary
+_target_: cnn10-binary.Cnn10New
+
+feature_extractor_freeze: false
+dropout_rate: 0.5
+hidden_dim: 256
+in_channels: 1
+
+transform:
+  type: grayscale 
